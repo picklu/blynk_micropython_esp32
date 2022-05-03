@@ -9,17 +9,25 @@ led = Pin(4, Pin.OUT)
 pot = ADC(Pin(36))
 blynk = Blynk(BLYNK_AUTH_TOKEN)
 
-def read_dht():
+@timer.register(vpin_num=0, interval=5, run_once=False)
+def read_temperature(vpin_num):
     t = random.random() * 50
+    print(f"[WRITE_VIRTUAL_WRITE] Pin: V{vpin_num} t: '{t}'")
+    blynk.virtual_write(vpin_num, t)
+
+
+@timer.register(vpin_num=1, interval=5, run_once=False)
+def read_humidity(vpin_num):
     h = random.random() * 100
-    blynk.virtual_write(0, t)
-    blynk.virtual_write(1, h)
+    print(f"[WRITE_VIRTUAL_WRITE] Pin: V{vpin_num} h: '{h}'")
+    blynk.virtual_write(vpin_num, h)
 
 
-def read_potentiometer():
+@timer.register(vpin_num=3, interval=5, run_once=False)
+def read_potentiometer(vpin_num):
     pot_val = pot.read()
-    print(f"Potentiometer reading is {pot_val}")
-    blynk.virtual_write(3, pot_val)
+    print(f"[WRITE_VIRTUAL_WRITE] Pin: V{vpin_num} Value: '{pot_val}'")
+    blynk.virtual_write(vpin_num, pot_val)
 
 @blynk.on("V*")
 def blynk_handle_vpins(pin, value):
@@ -39,8 +47,8 @@ def blynk_disconnected():
     print('Blynk disconnected')
 
 
-timer.set_timeout(5, read_dht)
-timer.set_timeout(5, read_potentiometer)
+# timer.set_timeout(5, read_dht)
+# timer.set_timeout(5, read_potentiometer)
 
 
 def runLoop():
