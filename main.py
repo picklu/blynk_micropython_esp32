@@ -1,9 +1,9 @@
 import random
 from BlynkLib import Blynk
-from BlynkTimer import BlynkTimer
+from BlynkTimer import Timer
 from machine import Pin, ADC
 
-timer = BlynkTimer()
+timer = Timer()
 
 led = Pin(4, Pin.OUT)
 pot = ADC(Pin(36))

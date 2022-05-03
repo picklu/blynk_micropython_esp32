@@ -6,126 +6,140 @@
     with polling
     
     source => https://github.com/vshymanskyy/blynk-library-python/blob/master/examples/04_timer.py
+    source => https://github.com/blynkkk/lib-python/blob/master/blynktimer.py
 
 """
 
-import time
+# Copyright (c) 2019-2020 Anton Morozenko
+"""
+Polling timers for functions.
+Registers timers and performs run once or periodical function execution after defined time intervals.
+"""
+# select.select call used as polling waiter where it is possible
+# cause time.sleep sometimes may load CPU up to 100% with small polling wait interval
+try:
+    # cpython
+    import time
+    import select
+
+    polling_wait = lambda x: select.select([], [], [], x)
+    polling_wait(0.01)
+except OSError:
+    # windows case where select.select call fails
+    polling_wait = lambda x: time.sleep(x)
+
+except ImportError:
+    # micropython
+    import utime as time
+
+    try:
+        from uselect import select as s_select
+
+        polling_wait = lambda x: s_select([], [], [], x)
+    except ImportError:
+        # case when micropython port does not support select.select
+        polling_wait = lambda x: time.sleep(x)
+
+WAIT_SEC = 0.05
+MAX_TIMERS = 16
+DEFAULT_INTERVAL = 10
 
 
-class BlynkTimer:
-    '''Executes functions after a defined period of time'''
-    _MAX_TIMERS = 16
-
-    def __init__(self):
-        self.timers = []
-        self.ids = self._get_unique_id()
-
-    def _get_unique_id(self, current=0):
-        '''yields unique id for new timer'''
-        numId = current
-        while numId < self._MAX_TIMERS:
-            yield numId
-            numId += 1
-
-    def _add(self, func, **kwargs):
-        '''Inits Timer'''
-        timerId = next(self.ids)
-        timer = Timer(timerId, func, **kwargs)
-        self.timers.append(timer)
-        return timer
-
-    def _get(self, timerId):
-        '''Gets timer by id'''
-        timer = [t for t in self.timers if t.id == timerId]
-        if len(timer) <= 0:
-            return None
-        return timer[0]
-
-    def _delete(self, timerId):
-        '''Deletes timer'''
-        timer = self._get(timerId)
-        timer.disable()
-        self.timers = [t for t in self.timers if t.id != timerId]
-        num_timers = self.get_num_timers()[0]
-        self.ids = self._get_unique_id(current=num_timers)
-        return timerId
-
-    def get_num_timers(self):
-        '''Returns number of used timer slots'''
-        num_timers = len(self.timers)
-        return (num_timers, self._MAX_TIMERS)
-
-    def is_enabled(self, timerId):
-        '''Returns true if timer is enabled'''
-        timer = self._get(timerId)
-        return timer.enabled
-
-    def set_interval(self, value, func):
-        '''Sets time interval for function'''
-        timer = self._add(func)
-        timer.set_interval(value)
-        return timer.id
-
-    def set_timeout(self, value, func):
-        '''Runs function once after timeout'''
-        timer = self._add(func, post_run=self._delete)
-        timer.set_interval(value)
-        return timer.id
-
-    def enable(self, timerId):
-        '''Enables timer'''
-        timer = self._get(timerId)
-        timer.enable()
-        return timerId
-
-    def disable(self, timerId):
-        '''Disables timer'''
-        timer = self._get(timerId)
-        timer.disable()
-        return timerId
-
-    def run(self):
-        '''Polls timers'''
-        [t.run() for t in self.timers]
+class TimerError(Exception):
+    pass
 
 
-class Timer:
-    '''Runs function after specific interval'''
+class Timer(object):
+    timers = {}
 
-    def __init__(self, id, func, **kwargs):
-        self.id = id
-        self.func = func
-        self.interval = None
-        self.start_time = None
-        self.enabled = False
-        self.on_post_run = kwargs.get('post_run', None)
+    def __init__(self, no_timers_err=True):
+        self.no_timers_err = no_timers_err
 
-    def _handle_post_run(self):
-        '''handles post run events'''
-        self.start_time += self.interval
-        if self.on_post_run:
-            return self.on_post_run(self.id)
+    def _get_func_name(self, obj):
+        """retrieves a suitable name for a function"""
+        if hasattr(obj, 'func'):
+            # handles nested decorators
+            return self._get_func_name(obj.func)
+        # simply returns 'timer' if on port without function attrs
+        return getattr(obj, '__name__', 'timer')
 
-    def enable(self):
-        '''enables Timer'''
-        self.enabled = True
-        self.start_time = time.time()
+    def register(blynk, *args, **kwargs):
+        # kwargs with defaults are used cause PEP 3102 no supported by Python2
+        interval = kwargs.pop('interval', DEFAULT_INTERVAL)
+        run_once = kwargs.pop('run_once', False)
+        stopped = kwargs.pop('stopped', False)
 
-    def disable(self):
-        '''disables timer'''
-        self.enabled = False
-        self.start_time = None
+        class Deco(object):
+            def __init__(self, func):
+                self.func = func
+                if len(list(Timer.timers.keys())) >= MAX_TIMERS:
+                    raise TimerError('Max allowed timers num={}'.format(MAX_TIMERS))
+                _timer = _Timer(interval, func, run_once, stopped, *args, **kwargs)
+                Timer.timers['{}_{}'.format(len(list(Timer.timers.keys())), blynk._get_func_name(func))] = _timer
 
-    def set_interval(self, value):
-        '''Sets Time Interval for calling function'''
-        self.interval = value
-        self.enable()
+            def __call__(self, *f_args, **f_kwargs):
+                return self.func(*f_args, **f_kwargs)
+
+        return Deco
+
+    @staticmethod
+    def stop(t_id):
+        timer = Timer.timers.get(t_id, None)
+        if timer is None:
+            raise TimerError('Timer id={} not found'.format(t_id))
+        Timer.timers[t_id].stopped = True
+
+    @staticmethod
+    def start(t_id):
+        timer = Timer.timers.get(t_id, None)
+        if timer is None:
+            raise TimerError('Timer id={} not found'.format(t_id))
+        Timer.timers[t_id].stopped = False
+        Timer.timers[t_id].fire_time = None
+        Timer.timers[t_id].fire_time_prev = None
+
+    @staticmethod
+    def is_stopped(t_id):
+        timer = Timer.timers.get(t_id, None)
+        if timer is None:
+            raise TimerError('Timer id={} not found'.format(t_id))
+        return timer.stopped
+
+    def get_timers(self):
+        states = {True: 'Stopped', False: 'Running'}
+        return {k: states[v.stopped] for k, v in self.timers.items()}
 
     def run(self):
-        '''Runs function if interval has passed'''
-        if not self.enabled:
-            return
-        now = time.time()
-        if now - self.start_time > self.interval:
-            self.func()
-            self._handle_post_run()
+        polling_wait(WAIT_SEC)
+        timers_intervals = [curr_timer.run() for curr_timer in Timer.timers.values() if not curr_timer.stopped]
+        if not timers_intervals and self.no_timers_err:
+            raise TimerError('Running timers not found')
+        return timers_intervals
+
+
+class _Timer(object):
+    def __init__(self, interval, deco, run_once, stopped, *args, **kwargs):
+        self.interval = interval
+        self.deco = deco
+        self.args = args
+        self.run_once = run_once
+        self.kwargs = kwargs
+        self.fire_time = None
+        self.fire_time_prev = None
+        self.stopped = stopped
+
+    def run(self):
+        timer_real_interval = 0
+        if self.fire_time is None:
+            self.fire_time = time.time() + self.interval
+        if self.fire_time_prev is None:
+            self.fire_time_prev = time.time()
+        curr_time = time.time()
+        if curr_time >= self.fire_time:
+            self.deco(*self.args, **self.kwargs)
+            if self.run_once:
+                self.stopped = True
+            timer_real_interval = curr_time - self.fire_time_prev
+            self.fire_time_prev = self.fire_time
+            self.fire_time = curr_time + self.interval
+        return timer_real_interval
