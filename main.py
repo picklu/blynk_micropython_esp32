@@ -1,38 +1,48 @@
 import random
+from dht import DHT11
+from machine import Pin
 from BlynkLib import Blynk
 from BlynkTimer import Timer
-from machine import Pin, ADC
 
-timer = Timer()
 
 led = Pin(4, Pin.OUT)
-pot = ADC(Pin(36))
+sensor = DHT11(Pin(14))
+
+timer = Timer()
 blynk = Blynk(BLYNK_AUTH_TOKEN)
+
+
+def measure_sensor(retry=3):
+    while retry >= 0:
+        try:
+            sensor.measure()
+            break
+        except:
+            retry = retry - 1
+            print(".", end="")
+    print()
+
 
 @timer.register(vpin_num=0, interval=5, run_once=False)
 def read_temperature(vpin_num):
-    t = random.random() * 50
+    measure_sensor()
+    t = sensor.temperature()
     print(f"[WRITE_VIRTUAL_WRITE] Pin: V{vpin_num} t: '{t}'")
     blynk.virtual_write(vpin_num, t)
 
 
 @timer.register(vpin_num=1, interval=5, run_once=False)
 def read_humidity(vpin_num):
-    h = random.random() * 100
-    print(f"[WRITE_VIRTUAL_WRITE] Pin: V{vpin_num} h: '{h}'")
+    measure_sensor()
+    h = sensor.humidity()
+    print(f"[VIRTUAL_WRITE] Pin: V{vpin_num} h: '{h}'")
     blynk.virtual_write(vpin_num, h)
 
 
-@timer.register(vpin_num=3, interval=5, run_once=False)
-def read_potentiometer(vpin_num):
-    pot_val = pot.read()
-    print(f"[WRITE_VIRTUAL_WRITE] Pin: V{vpin_num} Value: '{pot_val}'")
-    blynk.virtual_write(vpin_num, pot_val)
-
 @blynk.on("V*")
-def blynk_handle_vpins(pin, value):
-    print("V{} value: {}".format(pin, value))
-    if pin == "2":
+def blynk_handle_vpins(vpin_num, value):
+    print(f"[VIRTUAL_READ] Pin: V{vpin_num} value: {value}")
+    if vpin_num == "2":
         led.value(int(value[0]))
     
 
@@ -45,10 +55,6 @@ def blynk_connected(ping):
 @blynk.on("disconnected")
 def blynk_disconnected():
     print('Blynk disconnected')
-
-
-# timer.set_timeout(5, read_dht)
-# timer.set_timeout(5, read_potentiometer)
 
 
 def runLoop():
