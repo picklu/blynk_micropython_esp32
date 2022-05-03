@@ -1,0 +1,5 @@
+SSID = "**********"
+PASSWORD = "**************"
+BLYNK_TEMPLATE_ID = "****************"
+BLYNK_DEVICE_NAME = "Micropython ESP32 C1"
+BLYNK_AUTH_TOKEN = "*********************"
